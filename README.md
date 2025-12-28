@@ -1,41 +1,54 @@
 # JNarrator FX
 
-A Text-to-Speech narrator application built with JavaFX featuring a modern dark theme UI.
+A Text-to-Speech narrator application built with JavaFX featuring a modern dark theme UI and **high-quality neural voices**.
 
 ## Features
 
+- **Piper TTS Integration**: Natural-sounding neural voices (offline, free)
+- **Multiple Voice Options**: US/UK Male/Female voices
+- **Font Customization**: Change font family and size
 - **Text Input**: Large text area for typing or pasting content
 - **File Support**: Open `.txt` and `.md` files
 - **Voice Controls**: Adjustable speed (0.5x - 2.0x) and volume
 - **Audio Export**: Save narration as WAV audio file
 - **Playback Controls**: Play, Pause, and Stop functionality
-- **Cross-Platform TTS**: Uses native system speech synthesis
-  - Windows: SAPI via PowerShell
-  - macOS: `say` command
-  - Linux: `espeak`
+- **Fallback System TTS**: Windows SAPI, macOS `say`, Linux `espeak-ng`
 
-## Screenshots
+## TTS Engines
 
-The application features a clean dark theme with:
-- Menu bar (File, Edit, Help)
-- Central text input area
-- Right sidebar with voice settings
-- Bottom control bar with playback buttons
+### Piper TTS (Recommended)
+High-quality neural text-to-speech that runs locally. Voices sound natural and human-like.
+
+**Available Voices:**
+- Amy (US Female)
+- Ryan (US Male)
+- Lessac (US Female)
+- Jenny (UK Female)
+- Alan (UK Male)
+
+### System Default
+Falls back to OS-native TTS (lower quality but no setup required).
 
 ## Requirements
 
 - Java 17 or higher
 - Maven 3.6+
 - JavaFX 21 (automatically downloaded by Maven)
-- Linux only: `espeak` package (`sudo apt install espeak`)
+
+### For Piper TTS (optional but recommended)
+1. Download Piper from: https://github.com/rhasspy/piper/releases
+2. Extract to `~/piper/`
+3. Voice models are downloaded automatically via the app
+
+### For System TTS fallback
+- **Linux**: `sudo apt install espeak-ng alsa-utils`
+- **Windows/macOS**: Built-in, no installation needed
 
 ## Build & Run
 
-### Using Maven
-
 ```bash
 # Clone and navigate to project
-cd jnarrator-fx
+cd JNarrator-FX
 
 # Run directly
 mvn clean javafx:run
@@ -44,26 +57,19 @@ mvn clean javafx:run
 mvn clean package
 ```
 
-### Running the JAR
-
-```bash
-# Set JavaFX path and run
-java --module-path /path/to/javafx-sdk/lib \
-     --add-modules javafx.controls,javafx.fxml,javafx.media \
-     -jar target/jnarrator-fx-1.0.0.jar
-```
-
 ## Usage
 
-1. **Enter Text**: Type or paste text in the main area
-2. **Adjust Settings**: Use the right panel to set speed and volume
-3. **Play**: Click the Play button to start narration
-4. **Export**: Use File > Export to WAV to save audio
+1. **Select TTS Engine**: Choose "Piper (Neural - Best)" or "System Default"
+2. **Download Voice**: Click "Download Voice" to get a Piper voice model
+3. **Enter Text**: Type or paste text in the main area
+4. **Customize Font**: Adjust font family and size in settings
+5. **Play**: Click the Play button to start narration
+6. **Export**: Use File > Export to WAV to save audio
 
 ## Project Structure
 
 ```
-jnarrator-fx/
+JNarrator-FX/
 ├── pom.xml
 ├── README.md
 └── src/main/
