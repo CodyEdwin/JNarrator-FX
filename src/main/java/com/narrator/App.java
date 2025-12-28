@@ -18,6 +18,8 @@ public class App extends Application {
 
     private TextArea textArea;
     private ComboBox<String> voiceSelector;
+    private ComboBox<String> fontFamilySelector;
+    private Slider fontSizeSlider;
     private Slider speedSlider;
     private Slider volumeSlider;
     private Button playButton;
@@ -95,10 +97,42 @@ public class App extends Application {
     }
 
     private VBox createSettingsPanel() {
-        VBox settingsPanel = new VBox(20);
+        VBox settingsPanel = new VBox(15);
         settingsPanel.setPadding(new Insets(15));
-        settingsPanel.setPrefWidth(220);
+        settingsPanel.setPrefWidth(240);
         settingsPanel.getStyleClass().add("settings-panel");
+
+        // Font Settings Section
+        Label fontSectionLabel = new Label("Font Settings");
+        fontSectionLabel.setStyle("-fx-font-weight: bold;");
+
+        // Font Family
+        Label fontFamilyLabel = new Label("Font Family:");
+        fontFamilySelector = new ComboBox<>();
+        fontFamilySelector.getItems().addAll(
+            "Consolas", "Courier New", "Monospace", 
+            "Arial", "Verdana", "Tahoma", "Georgia", 
+            "Times New Roman", "Segoe UI", "System"
+        );
+        fontFamilySelector.setValue("Consolas");
+        fontFamilySelector.setMaxWidth(Double.MAX_VALUE);
+        fontFamilySelector.setOnAction(e -> updateTextAreaFont());
+
+        // Font Size
+        Label fontSizeLabel = new Label("Font Size: 16px");
+        fontSizeSlider = new Slider(10, 32, 16);
+        fontSizeSlider.setShowTickLabels(true);
+        fontSizeSlider.setShowTickMarks(true);
+        fontSizeSlider.setMajorTickUnit(6);
+        fontSizeSlider.setBlockIncrement(2);
+        fontSizeSlider.valueProperty().addListener((obs, old, val) -> {
+            fontSizeLabel.setText(String.format("Font Size: %.0fpx", val.doubleValue()));
+            updateTextAreaFont();
+        });
+
+        // Voice Settings Section
+        Label voiceSectionLabel = new Label("Voice Settings");
+        voiceSectionLabel.setStyle("-fx-font-weight: bold;");
 
         // Voice Selection
         Label voiceLabel = new Label("Voice:");
@@ -125,13 +159,26 @@ public class App extends Application {
             volumeLabel.setText(String.format("Volume: %.0f%%", val.doubleValue())));
 
         settingsPanel.getChildren().addAll(
-            new Label("Settings"), new Separator(),
+            fontSectionLabel, new Separator(),
+            fontFamilyLabel, fontFamilySelector,
+            fontSizeLabel, fontSizeSlider,
+            new Separator(),
+            voiceSectionLabel, new Separator(),
             voiceLabel, voiceSelector,
             speedLabel, speedSlider,
             volumeLabel, volumeSlider
         );
 
         return settingsPanel;
+    }
+
+    private void updateTextAreaFont() {
+        String fontFamily = fontFamilySelector.getValue();
+        int fontSize = (int) fontSizeSlider.getValue();
+        textArea.setStyle(String.format(
+            "-fx-font-family: '%s'; -fx-font-size: %dpx; -fx-text-fill: #FFFFFF;",
+            fontFamily, fontSize
+        ));
     }
 
     private HBox createControlBar() {
