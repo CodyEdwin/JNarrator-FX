@@ -5,13 +5,26 @@ import javafx.application.Platform;
 import javafx.concurrent.Task;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.geometry.Rectangle2D;
+import javafx.scene.Cursor;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
+import javafx.scene.image.WritableImage;
+import javafx.scene.input.KeyCode;
+import javafx.scene.input.KeyCodeCombination;
+import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.*;
-import javafx.stage.DirectoryChooser;
+import javafx.scene.paint.Color;
+import javafx.scene.robot.Robot;
+import javafx.scene.shape.Rectangle;
 import javafx.stage.FileChooser;
+import javafx.stage.Screen;
 import javafx.stage.Stage;
+import javafx.stage.StageStyle;
+import javafx.embed.swing.SwingFXUtils;
 
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
 import java.io.*;
 import java.net.URL;
 import java.nio.file.Files;
@@ -32,11 +45,16 @@ public class App extends Application {
     private Label statusLabel;
     private ProgressBar progressBar;
     private TextField piperPathField;
+    private TextField tesseractPathField;
     
     private Process ttsProcess;
     private volatile boolean isSpeaking = false;
+    private Stage primaryStage;
     
-    // Piper voice models (name -> download URL)
+    // Screen capture variables
+    private double startX, startY, endX, endY;
+    
+    // Piper voice models
     private static final String[][] PIPER_VOICES = {
         {"Amy (US Female)", "en_US-amy-medium", "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx"},
         {"Ryan (US Male)", "en_US-ryan-medium", "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/ryan/medium/en_US-ryan-medium.onnx"},
@@ -47,7 +65,8 @@ public class App extends Application {
 
     @Override
     public void start(Stage primaryStage) {
-        primaryStage.setTitle("JNarrator FX - Text to Speech");
+        this.primaryStage = primaryStage;
+        primaryStage.setTitle("JNarrator FX - Text to Speech (F5: Screen Capture OCR)");
 
         BorderPane root = new BorderPane();
         root.getStyleClass().add("root-pane");
@@ -57,10 +76,10 @@ public class App extends Application {
 
         // Center - Text Area
         textArea = new TextArea();
-        textArea.setPromptText("Enter or paste text here to narrate...");
+        textArea.setPromptText("Enter or paste text here to narrate...\n\nPress F5 to capture screen region and OCR!");
         textArea.setWrapText(true);
         textArea.getStyleClass().add("text-input");
-        VBox centerBox = new VBox(10, new Label("Text to Narrate:"), textArea);
+        VBox centerBox = new VBox(10, new Label("Text to Narrate (F5: Screen Capture OCR):"), textArea);
         centerBox.setPadding(new Insets(15));
         VBox.setVgrow(textArea, Priority.ALWAYS);
         root.setCenter(centerBox);
@@ -71,13 +90,193 @@ public class App extends Application {
         // Bottom - Controls
         root.setBottom(createControlBar());
 
-        Scene scene = new Scene(root, 950, 650);
+        Scene scene = new Scene(root, 1000, 700);
         scene.getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
         
+        // F5 hotkey for screen capture
+        scene.setOnKeyPressed(e -> {
+            if (e.getCode() == KeyCode.F5) {
+                startScreenCapture();
+            }
+        });
+        
         primaryStage.setScene(scene);
-        primaryStage.setMinWidth(800);
-        primaryStage.setMinHeight(550);
+        primaryStage.setMinWidth(850);
+        primaryStage.setMinHeight(600);
         primaryStage.show();
+    }
+
+    private void startScreenCapture() {
+        // Hide main window
+        primaryStage.setIconified(true);
+        
+        // Small delay to let window minimize
+        new Thread(() -> {
+            try {
+                Thread.sleep(300);
+            } catch (InterruptedException ignored) {}
+            
+            Platform.runLater(this::showCaptureOverlay);
+        }).start();
+    }
+
+    private void showCaptureOverlay() {
+        // Get full screen bounds
+        Rectangle2D screenBounds = Screen.getPrimary().getBounds();
+        
+        // Create fullscreen transparent stage
+        Stage overlayStage = new Stage();
+        overlayStage.initStyle(StageStyle.TRANSPARENT);
+        overlayStage.setAlwaysOnTop(true);
+        
+        // Create overlay pane
+        Pane overlayPane = new Pane();
+        overlayPane.setStyle("-fx-background-color: rgba(0, 0, 0, 0.3);");
+        overlayPane.setCursor(Cursor.CROSSHAIR);
+        
+        // Selection rectangle
+        Rectangle selectionRect = new Rectangle();
+        selectionRect.setFill(Color.TRANSPARENT);
+        selectionRect.setStroke(Color.LIME);
+        selectionRect.setStrokeWidth(2);
+        selectionRect.getStrokeDashArray().addAll(5.0, 5.0);
+        overlayPane.getChildren().add(selectionRect);
+        
+        // Instructions label
+        Label instructionLabel = new Label("Click and drag to select area. Press ESC to cancel.");
+        instructionLabel.setStyle("-fx-background-color: rgba(0,0,0,0.7); -fx-text-fill: white; -fx-padding: 10; -fx-font-size: 14px;");
+        instructionLabel.setLayoutX(20);
+        instructionLabel.setLayoutY(20);
+        overlayPane.getChildren().add(instructionLabel);
+        
+        // Mouse events
+        overlayPane.setOnMousePressed(e -> {
+            startX = e.getScreenX();
+            startY = e.getScreenY();
+            selectionRect.setX(startX);
+            selectionRect.setY(startY);
+            selectionRect.setWidth(0);
+            selectionRect.setHeight(0);
+        });
+        
+        overlayPane.setOnMouseDragged(e -> {
+            endX = e.getScreenX();
+            endY = e.getScreenY();
+            
+            double x = Math.min(startX, endX);
+            double y = Math.min(startY, endY);
+            double w = Math.abs(endX - startX);
+            double h = Math.abs(endY - startY);
+            
+            selectionRect.setX(x);
+            selectionRect.setY(y);
+            selectionRect.setWidth(w);
+            selectionRect.setHeight(h);
+        });
+        
+        overlayPane.setOnMouseReleased(e -> {
+            overlayStage.close();
+            
+            double x = Math.min(startX, endX);
+            double y = Math.min(startY, endY);
+            double w = Math.abs(endX - startX);
+            double h = Math.abs(endY - startY);
+            
+            if (w > 10 && h > 10) {
+                captureAndOCR(x, y, w, h);
+            } else {
+                primaryStage.setIconified(false);
+            }
+        });
+        
+        Scene overlayScene = new Scene(overlayPane, screenBounds.getWidth(), screenBounds.getHeight());
+        overlayScene.setFill(Color.TRANSPARENT);
+        
+        // ESC to cancel
+        overlayScene.setOnKeyPressed(e -> {
+            if (e.getCode() == KeyCode.ESCAPE) {
+                overlayStage.close();
+                primaryStage.setIconified(false);
+            }
+        });
+        
+        overlayStage.setScene(overlayScene);
+        overlayStage.setX(screenBounds.getMinX());
+        overlayStage.setY(screenBounds.getMinY());
+        overlayStage.setWidth(screenBounds.getWidth());
+        overlayStage.setHeight(screenBounds.getHeight());
+        overlayStage.show();
+        overlayPane.requestFocus();
+    }
+
+    private void captureAndOCR(double x, double y, double w, double h) {
+        statusLabel.setText("Capturing screen...");
+        progressBar.setProgress(-1);
+        
+        Task<String> ocrTask = new Task<>() {
+            @Override
+            protected String call() throws Exception {
+                // Use Robot to capture screen
+                Robot robot = new Robot();
+                WritableImage capture = robot.getScreenCapture(null, x, y, w, h);
+                
+                // Save to temp file
+                BufferedImage bufferedImage = SwingFXUtils.fromFXImage(capture, null);
+                File tempFile = File.createTempFile("capture_", ".png");
+                tempFile.deleteOnExit();
+                ImageIO.write(bufferedImage, "png", tempFile);
+                
+                // Run Tesseract OCR
+                String tesseractPath = tesseractPathField.getText();
+                ProcessBuilder pb = new ProcessBuilder(
+                    tesseractPath,
+                    tempFile.getAbsolutePath(),
+                    "stdout",
+                    "-l", "eng"
+                );
+                pb.redirectErrorStream(true);
+                
+                Process process = pb.start();
+                StringBuilder output = new StringBuilder();
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        output.append(line).append("\n");
+                    }
+                }
+                process.waitFor();
+                
+                return output.toString().trim();
+            }
+        };
+        
+        ocrTask.setOnSucceeded(e -> {
+            String text = ocrTask.getValue();
+            if (text != null && !text.isEmpty()) {
+                textArea.setText(text);
+                statusLabel.setText("OCR complete - " + text.split("\\s+").length + " words");
+                progressBar.setProgress(1);
+                
+                // Auto-speak if text found
+                if (!text.isEmpty()) {
+                    startSpeaking();
+                }
+            } else {
+                statusLabel.setText("No text detected in selection");
+                progressBar.setProgress(0);
+            }
+            primaryStage.setIconified(false);
+            primaryStage.toFront();
+        });
+        
+        ocrTask.setOnFailed(e -> {
+            statusLabel.setText("OCR failed: " + ocrTask.getException().getMessage());
+            progressBar.setProgress(0);
+            primaryStage.setIconified(false);
+            primaryStage.toFront();
+        });
+        
+        new Thread(ocrTask).start();
     }
 
     private MenuBar createMenuBar(Stage stage) {
@@ -99,31 +298,53 @@ public class App extends Application {
         clearItem.setOnAction(e -> textArea.clear());
         MenuItem pasteItem = new MenuItem("Paste");
         pasteItem.setOnAction(e -> textArea.paste());
-        editMenu.getItems().addAll(clearItem, pasteItem);
+        MenuItem captureItem = new MenuItem("Screen Capture OCR (F5)");
+        captureItem.setOnAction(e -> startScreenCapture());
+        editMenu.getItems().addAll(clearItem, pasteItem, new SeparatorMenuItem(), captureItem);
 
         // Help Menu
         Menu helpMenu = new Menu("Help");
         MenuItem setupPiperItem = new MenuItem("Setup Piper TTS...");
         setupPiperItem.setOnAction(e -> showPiperSetupDialog());
+        MenuItem setupTesseractItem = new MenuItem("Setup Tesseract OCR...");
+        setupTesseractItem.setOnAction(e -> showTesseractSetupDialog());
         MenuItem aboutItem = new MenuItem("About");
         aboutItem.setOnAction(e -> showAbout());
-        helpMenu.getItems().addAll(setupPiperItem, new SeparatorMenuItem(), aboutItem);
+        helpMenu.getItems().addAll(setupPiperItem, setupTesseractItem, new SeparatorMenuItem(), aboutItem);
 
         menuBar.getMenus().addAll(fileMenu, editMenu, helpMenu);
         return menuBar;
     }
 
     private VBox createSettingsPanel(Stage stage) {
-        VBox settingsPanel = new VBox(12);
-        settingsPanel.setPadding(new Insets(15));
-        settingsPanel.setPrefWidth(260);
+        VBox settingsPanel = new VBox(10);
+        settingsPanel.setPadding(new Insets(12));
+        settingsPanel.setPrefWidth(270);
         settingsPanel.getStyleClass().add("settings-panel");
+
+        // OCR Section
+        Label ocrSectionLabel = new Label("OCR Settings");
+        ocrSectionLabel.setStyle("-fx-font-weight: bold;");
+        
+        Label tesseractLabel = new Label("Tesseract Path:");
+        tesseractPathField = new TextField();
+        tesseractPathField.setPromptText("Path to tesseract");
+        tesseractPathField.setText(getDefaultTesseractPath());
+        
+        Button browseTesseractBtn = new Button("...");
+        browseTesseractBtn.setOnAction(e -> browseTesseractPath(stage));
+        HBox tesseractBox = new HBox(5, tesseractPathField, browseTesseractBtn);
+        HBox.setHgrow(tesseractPathField, Priority.ALWAYS);
+        
+        Button captureBtn = new Button("Screen Capture (F5)");
+        captureBtn.setMaxWidth(Double.MAX_VALUE);
+        captureBtn.setStyle("-fx-background-color: #4CAF50; -fx-text-fill: white;");
+        captureBtn.setOnAction(e -> startScreenCapture());
 
         // Font Settings Section
         Label fontSectionLabel = new Label("Font Settings");
         fontSectionLabel.setStyle("-fx-font-weight: bold;");
 
-        // Font Family
         Label fontFamilyLabel = new Label("Font Family:");
         fontFamilySelector = new ComboBox<>();
         fontFamilySelector.getItems().addAll(
@@ -135,13 +356,11 @@ public class App extends Application {
         fontFamilySelector.setMaxWidth(Double.MAX_VALUE);
         fontFamilySelector.setOnAction(e -> updateTextAreaFont());
 
-        // Font Size
         Label fontSizeLabel = new Label("Font Size: 16px");
         fontSizeSlider = new Slider(10, 32, 16);
         fontSizeSlider.setShowTickLabels(true);
         fontSizeSlider.setShowTickMarks(true);
         fontSizeSlider.setMajorTickUnit(6);
-        fontSizeSlider.setBlockIncrement(2);
         fontSizeSlider.valueProperty().addListener((obs, old, val) -> {
             fontSizeLabel.setText(String.format("Font Size: %.0fpx", val.doubleValue()));
             updateTextAreaFont();
@@ -151,7 +370,6 @@ public class App extends Application {
         Label voiceSectionLabel = new Label("Voice Settings");
         voiceSectionLabel.setStyle("-fx-font-weight: bold;");
 
-        // TTS Engine Selection
         Label engineLabel = new Label("TTS Engine:");
         engineSelector = new ComboBox<>();
         engineSelector.getItems().addAll("Piper (Neural - Best)", "System Default");
@@ -159,13 +377,11 @@ public class App extends Application {
         engineSelector.setMaxWidth(Double.MAX_VALUE);
         engineSelector.setOnAction(e -> updateVoiceOptions());
 
-        // Voice Selection
         Label voiceLabel = new Label("Voice:");
         voiceSelector = new ComboBox<>();
         voiceSelector.setMaxWidth(Double.MAX_VALUE);
         updateVoiceOptions();
 
-        // Piper Path
         Label piperPathLabel = new Label("Piper Path:");
         piperPathField = new TextField();
         piperPathField.setPromptText("Path to piper executable");
@@ -176,21 +392,17 @@ public class App extends Application {
         HBox piperPathBox = new HBox(5, piperPathField, browsePiperBtn);
         HBox.setHgrow(piperPathField, Priority.ALWAYS);
 
-        // Download voice button
         Button downloadVoiceBtn = new Button("Download Voice");
         downloadVoiceBtn.setMaxWidth(Double.MAX_VALUE);
         downloadVoiceBtn.setOnAction(e -> downloadSelectedVoice());
 
-        // Speed Control
         Label speedLabel = new Label("Speed: 1.0x");
         speedSlider = new Slider(0.5, 2.0, 1.0);
         speedSlider.setShowTickLabels(true);
-        speedSlider.setShowTickMarks(true);
         speedSlider.setMajorTickUnit(0.5);
         speedSlider.valueProperty().addListener((obs, old, val) -> 
             speedLabel.setText(String.format("Speed: %.1fx", val.doubleValue())));
 
-        // Volume Control
         Label volumeLabel = new Label("Volume: 100%");
         volumeSlider = new Slider(0, 100, 100);
         volumeSlider.setShowTickLabels(true);
@@ -199,6 +411,10 @@ public class App extends Application {
             volumeLabel.setText(String.format("Volume: %.0f%%", val.doubleValue())));
 
         settingsPanel.getChildren().addAll(
+            ocrSectionLabel, new Separator(),
+            tesseractLabel, tesseractBox,
+            captureBtn,
+            new Separator(),
             fontSectionLabel, new Separator(),
             fontFamilyLabel, fontFamilySelector,
             fontSizeLabel, fontSizeSlider,
@@ -208,12 +424,60 @@ public class App extends Application {
             voiceLabel, voiceSelector,
             piperPathLabel, piperPathBox,
             downloadVoiceBtn,
-            new Separator(),
             speedLabel, speedSlider,
             volumeLabel, volumeSlider
         );
 
         return settingsPanel;
+    }
+
+    private String getDefaultTesseractPath() {
+        String os = System.getProperty("os.name").toLowerCase();
+        if (os.contains("win")) {
+            return "C:\\Program Files\\Tesseract-OCR\\tesseract.exe";
+        } else if (os.contains("mac")) {
+            return "/usr/local/bin/tesseract";
+        } else {
+            return "/usr/bin/tesseract";
+        }
+    }
+
+    private void browseTesseractPath(Stage stage) {
+        FileChooser fc = new FileChooser();
+        fc.setTitle("Select Tesseract Executable");
+        File file = fc.showOpenDialog(stage);
+        if (file != null) {
+            tesseractPathField.setText(file.getAbsolutePath());
+        }
+    }
+
+    private void showTesseractSetupDialog() {
+        Alert alert = new Alert(Alert.AlertType.INFORMATION);
+        alert.setTitle("Setup Tesseract OCR");
+        alert.setHeaderText("How to Install Tesseract OCR");
+        
+        String os = System.getProperty("os.name").toLowerCase();
+        String instructions;
+        
+        if (os.contains("win")) {
+            instructions = "Windows:\n" +
+                "1. Download from:\n" +
+                "   https://github.com/UB-Mannheim/tesseract/wiki\n\n" +
+                "2. Run the installer\n\n" +
+                "3. Default path: C:\\Program Files\\Tesseract-OCR\\tesseract.exe";
+        } else if (os.contains("mac")) {
+            instructions = "macOS:\n" +
+                "brew install tesseract";
+        } else {
+            instructions = "Linux (Arch):\n" +
+                "sudo pacman -S tesseract tesseract-data-eng\n\n" +
+                "Linux (Debian/Ubuntu):\n" +
+                "sudo apt install tesseract-ocr";
+        }
+        
+        alert.setContentText(instructions);
+        alert.getDialogPane().setMinWidth(450);
+        alert.showAndWait();
     }
 
     private void updateVoiceOptions() {
@@ -277,11 +541,9 @@ public class App extends Application {
                 Path voicesDir = Path.of(System.getProperty("user.home"), "piper", "voices");
                 Files.createDirectories(voicesDir);
 
-                // Download model
                 Path modelPath = voicesDir.resolve(modelName + ".onnx");
                 downloadFile(modelUrl, modelPath);
 
-                // Download config
                 Path jsonPath = voicesDir.resolve(modelName + ".onnx.json");
                 downloadFile(jsonUrl, jsonPath);
 
@@ -345,7 +607,7 @@ public class App extends Application {
         progressBar.setPrefWidth(200);
         HBox.setHgrow(progressBar, Priority.ALWAYS);
 
-        statusLabel = new Label("Ready");
+        statusLabel = new Label("Ready - Press F5 to capture screen");
         statusLabel.getStyleClass().add("status-label");
 
         controlBar.getChildren().addAll(playButton, stopButton, progressBar, statusLabel);
@@ -413,7 +675,6 @@ public class App extends Application {
             throw new Exception("Piper not found. Please install Piper TTS.");
         }
 
-        // Get selected voice model
         String selectedVoice = voiceSelector.getValue();
         String modelName = null;
         for (String[] v : PIPER_VOICES) {
@@ -430,11 +691,9 @@ public class App extends Application {
             throw new Exception("Voice model not found. Click 'Download Voice' first.");
         }
 
-        // Create temp file for audio output
         File tempWav = File.createTempFile("piper_", ".wav");
         tempWav.deleteOnExit();
 
-        // Build piper command
         ProcessBuilder pb = new ProcessBuilder(
             piperPath,
             "--model", modelPath.toString(),
@@ -444,15 +703,12 @@ public class App extends Application {
 
         ttsProcess = pb.start();
 
-        // Write text to piper's stdin
         try (OutputStream os = ttsProcess.getOutputStream()) {
             os.write(text.getBytes());
             os.flush();
         }
 
         ttsProcess.waitFor();
-
-        // Play the generated WAV file
         playWavFile(tempWav);
     }
 
@@ -461,14 +717,12 @@ public class App extends Application {
         ProcessBuilder pb;
 
         if (os.contains("win")) {
-            // Windows Media Player or PowerShell
             pb = new ProcessBuilder("powershell", "-Command",
                 String.format("(New-Object Media.SoundPlayer '%s').PlaySync()", 
                     wavFile.getAbsolutePath()));
         } else if (os.contains("mac")) {
             pb = new ProcessBuilder("afplay", wavFile.getAbsolutePath());
         } else {
-            // Linux - try aplay, paplay, or ffplay
             pb = new ProcessBuilder("aplay", wavFile.getAbsolutePath());
         }
 
@@ -498,7 +752,6 @@ public class App extends Application {
             String voice = voiceSelector.getValue().equals("Female") ? "Samantha" : "Alex";
             pb = new ProcessBuilder("say", "-v", voice, "-r", String.valueOf(macRate), text);
         } else {
-            // Linux - try espeak-ng first (better than espeak)
             int espeakSpeed = (int) (160 * speedSlider.getValue());
             pb = new ProcessBuilder("espeak-ng", "-s", String.valueOf(espeakSpeed), 
                                    "-a", String.valueOf(volume * 2), text);
@@ -520,7 +773,7 @@ public class App extends Application {
             isSpeaking = false;
             playButton.setText("Play");
             stopButton.setDisable(true);
-            statusLabel.setText("Ready");
+            statusLabel.setText("Ready - Press F5 to capture screen");
             progressBar.setProgress(0);
         });
     }
@@ -680,13 +933,15 @@ public class App extends Application {
     private void showAbout() {
         Alert alert = new Alert(Alert.AlertType.INFORMATION);
         alert.setTitle("About JNarrator FX");
-        alert.setHeaderText("JNarrator FX v2.0");
+        alert.setHeaderText("JNarrator FX v3.0");
         alert.setContentText(
             "A Text-to-Speech narrator application.\n" +
             "Built with JavaFX.\n\n" +
-            "Supports:\n" +
+            "Features:\n" +
+            "- Screen Capture OCR (F5)\n" +
             "- Piper TTS (Neural voices)\n" +
-            "- System TTS (Windows/macOS/Linux)\n\n" +
+            "- System TTS fallback\n" +
+            "- Tesseract OCR integration\n\n" +
             "Author: Matrix Agent"
         );
         alert.showAndWait();
